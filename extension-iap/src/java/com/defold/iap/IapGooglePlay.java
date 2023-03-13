@@ -243,6 +243,20 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
         return billingResponseCodeToDefoldResponse(result.getResponseCode());
     }
 
+    private void invokeOnPurchaseResultListener(IPurchaseListener purchaseListener, int billingResultCode, String purchaseData) {
+        if (purchaseListener == null) {
+            Log.w(TAG, "Received billing result but no listener has been set");
+            return;
+        }
+        purchaseListener.onPurchaseResult(billingResultCode, purchaseData);
+    }
+    private void invokeOnPurchaseResultListener(IPurchaseListener purchaseListener, BillingResult billingResult, Purchase purchase) {
+        invokeOnPurchaseResultListener(purchaseListener, billingResultToDefoldResponse(billingResult), convertPurchase(purchase));
+    }
+    private void invokeOnPurchaseResultListener(IPurchaseListener purchaseListener, BillingResult billingResult) {
+        invokeOnPurchaseResultListener(purchaseListener, billingResultToDefoldResponse(billingResult), "");
+    }
+
     /**
      * This method is called either explicitly from Lua or from extension code
      * when "set_listener()" is called from Lua.
@@ -306,7 +320,7 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
                 // note: we only call the purchase listener if an error happens
                 if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                     Log.e(TAG, "Unable to consume purchase: " + billingResult.getDebugMessage());
-                    purchaseListener.onPurchaseResult(billingResultToDefoldResponse(billingResult), "");
+                    invokeOnPurchaseResultListener(purchaseListener, billingResult);
                 }
             }
         });
@@ -329,7 +343,7 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
                 // note: we only call the purchase listener if an error happens
                 if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                     Log.e(TAG, "Unable to acknowledge purchase: " + billingResult.getDebugMessage());
-                    purchaseListener.onPurchaseResult(billingResultToDefoldResponse(billingResult), "");
+                    invokeOnPurchaseResultListener(purchaseListener, billingResult);
                 }
             }
         });
@@ -348,12 +362,12 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
                 @Override
                 public void onConsumeResponse(BillingResult billingResult, String purchaseToken) {
                     Log.d(TAG, "handlePurchase() response code " + billingResult.getResponseCode() + " purchaseToken: " + purchaseToken);
-                    purchaseListener.onPurchaseResult(billingResultToDefoldResponse(billingResult), convertPurchase(purchase));
+                    invokeOnPurchaseResultListener(purchaseListener, billingResult, purchase);
                 }
             });
         }
         else {
-            purchaseListener.onPurchaseResult(billingResponseCodeToDefoldResponse(BillingResponseCode.OK), convertPurchase(purchase));
+            invokeOnPurchaseResultListener(purchaseListener, billingResponseCodeToDefoldResponse(BillingResponseCode.OK), convertPurchase(purchase));
         }
     }
 
@@ -362,13 +376,17 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
      */
     @Override
     public void onPurchasesUpdated(BillingResult billingResult, List<Purchase> purchases) {
-        if (billingResult.getResponseCode() == BillingResponseCode.OK && purchases != null) {
-            for (Purchase purchase : purchases) {
-                handlePurchase(purchase, this.purchaseListener);
+        if (billingResult.getResponseCode() == BillingResponseCode.OK) {
+            if (purchases != null && !purchases.isEmpty()) {
+                for (Purchase purchase : purchases) {
+                    if (purchase != null) {
+                        handlePurchase(purchase, this.purchaseListener);
+                    }
+                }
             }
         }
         else {
-            this.purchaseListener.onPurchaseResult(billingResultToDefoldResponse(billingResult), "");
+            invokeOnPurchaseResultListener(this.purchaseListener, billingResult);
         }
     }
 
@@ -392,7 +410,7 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
         BillingResult billingResult = billingClient.launchBillingFlow(this.activity, billingFlowParams);
         if (billingResult.getResponseCode() != BillingResponseCode.OK) {
             Log.e(TAG, "Purchase failed: " + billingResult.getDebugMessage());
-            purchaseListener.onPurchaseResult(billingResultToDefoldResponse(billingResult), "");
+            invokeOnPurchaseResultListener(purchaseListener, billingResult);
         }
     }
 
@@ -413,11 +431,16 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
                 @Override
                 public void onProductDetailsResponse(BillingResult billingResult, List<ProductDetails> productDetailsList) {
                     if (billingResult.getResponseCode() == BillingResponseCode.OK && (productDetailsList != null) && !productDetailsList.isEmpty()) {
-                        buyProduct(productDetailsList.get(0), token, purchaseListener);
+                        for (ProductDetails productDetails : productDetailsList) {
+                            if (productDetails != null) {
+                                buyProduct(productDetails, token, purchaseListener);
+                                break;
+                            }
+                        }
                     }
                     else {
                         Log.e(TAG, "Unable to get product details before buying: " + billingResult.getDebugMessage());
-                        purchaseListener.onPurchaseResult(billingResultToDefoldResponse(billingResult), "");
+                        invokeOnPurchaseResultListener(purchaseListener, billingResult);
                     }
                 }
             });
@@ -435,10 +458,12 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
 
             @Override
             public void onProductDetailsResponse(BillingResult billingResult, List<ProductDetails> productDetails) {
-                if (productDetails != null) {
+                if (productDetails != null && !productDetails.isEmpty()) {
                     // cache products (cache will be used to speed up buying)
                     for (ProductDetails pd : productDetails) {
-                        IapGooglePlay.this.products.put(pd.getProductId(), pd);
+                        if (pd != null) {
+                            IapGooglePlay.this.products.put(pd.getProductId(), pd);
+                        }
                     }
                     // add to list of all product details
                     allProductDetails.addAll(productDetails);
@@ -485,9 +510,11 @@ public class IapGooglePlay implements PurchasesUpdatedListener {
             @Override
             public void onProductDetailsResponse(BillingResult billingResult, List<ProductDetails> productDetails) {
                 JSONArray a = new JSONArray();
-                if (billingResult.getResponseCode() == BillingResponseCode.OK) {
+                if ((billingResult.getResponseCode() == BillingResponseCode.OK) && (productDetails != null) && !productDetails.isEmpty()) {
                     for (ProductDetails pd : productDetails) {
-                        a.put(convertProductDetails(pd));
+                        if (pd != null) {
+                            a.put(convertProductDetails(pd));
+                        }
                     }
                 }
                 else {
